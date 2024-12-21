@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"go_redis/internal/client"
 	"log"
-	"time"
 )
 
 func main() {
@@ -12,54 +12,54 @@ func main() {
 	if err != nil {
 		log.Fatalln("Client Error:", err.Error())
 	}
-
+	c.WG.Add(1)
 	go func() {
 		err := c.ReadData()
 		if err != nil {
 			log.Println("Error reading data:", err.Error())
 		}
+		c.WG.Done()
 	}()
 
-	//time.Sleep(time.Second)
-	err = c.Put(context.Background(), "name", "hardik")
+	err = c.Put(context.Background(), "name", fmt.Sprintf("Hardik"))
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	//time.Sleep(time.Second)
-	err = c.Put(context.Background(), "surname", "roongta")
+
+	err = c.Put(context.Background(), "surname", fmt.Sprintf("Roongta"))
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	//time.Sleep(time.Second)
-	err = c.Put(context.Background(), "city", "guwahati")
+
+	err = c.Put(context.Background(), "city", fmt.Sprintf("Guwahati"))
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	//time.Sleep(time.Second)
+
 	err = c.Put(context.Background(), "clg", "iitg")
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	//time.Sleep(time.Second)
+
 	err = c.Get(context.Background(), "name")
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	//time.Sleep(time.Second)
-	err = c.Put(context.Background(), "color", "red")
+
+	err = c.Put(context.Background(), "color", fmt.Sprintf("Red"))
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	//time.Sleep(time.Second)
+
 	err = c.Get(context.Background(), "color")
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	//time.Sleep(time.Second)
+
 	err = c.Get(context.Background(), "surname")
 	if err != nil {
 		log.Println("Client Error:", err.Error())
 	}
-	time.Sleep(time.Second)
-	c.Close()
+
+	c.WG.Wait()
 }

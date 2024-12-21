@@ -2,9 +2,12 @@ package goredis
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 )
+
+var CONN_CLOSE = errors.New("CONN_CLOSE")
 
 type Reader struct {
 	conn net.Conn
@@ -23,6 +26,9 @@ func (p *Reader) Read() ([]byte, error) {
 		return nil, err
 	}
 	sizeInt := binary.BigEndian.Uint16(sizeBytes)
+	if sizeInt == 0 {
+		return nil, CONN_CLOSE
+	}
 	dataBytes := make([]byte, sizeInt)
 	n, err := p.conn.Read(dataBytes)
 	if err != nil {

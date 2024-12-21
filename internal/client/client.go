@@ -2,16 +2,18 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go_redis/pkg/goredis"
-	"io"
 	"log"
 	"net"
+	"sync"
 )
 
 type Client struct {
 	addr string
 	conn net.Conn
+	WG   *sync.WaitGroup
 }
 
 func New(addr string) (*Client, error) {
@@ -22,6 +24,7 @@ func New(addr string) (*Client, error) {
 	return &Client{
 		addr: addr,
 		conn: conn,
+		WG:   new(sync.WaitGroup),
 	}, nil
 }
 
@@ -29,7 +32,7 @@ func (c *Client) ReadData() error {
 	for {
 		reader := goredis.NewReader(c.conn)
 		data, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, net.ErrClosed) || errors.Is(err, goredis.CONN_CLOSE) {
 			return nil
 		}
 		if err != nil {
@@ -51,6 +54,21 @@ func (c *Client) Get(ctx context.Context, key string) error {
 	return writer.Write([]byte(str))
 }
 
+func (c *Client) SendCloseMessage(wg *sync.WaitGroup) {
+	defer wg.Done()
+	w := goredis.NewWriter(c.conn)
+	err := w.Write([]byte(""))
+	if err != nil {
+		log.Println("Error sending CLOSE signal to client:", err.Error())
+		return
+	}
+}
+
 func (c *Client) Close() error {
+	writer := goredis.NewWriter(c.conn)
+	err := writer.Write([]byte(""))
+	if err != nil {
+		return err
+	}
 	return c.conn.Close()
 }

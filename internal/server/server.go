@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"errors"
+	"go_redis/pkg/goredis"
 	"log"
 	"net"
+	"sync"
 )
 
 type CacheServer struct {
@@ -13,8 +15,9 @@ type CacheServer struct {
 	quitChannel    chan struct{}
 	msgChannel     chan Message
 	addPeerChannel chan *net.Conn
-	peers          []*Peer
+	peers          map[*Peer]bool
 	cache          Cache
+	wg             *sync.WaitGroup
 }
 
 func NewCacheServer(listenAddr string) *CacheServer {
@@ -23,29 +26,33 @@ func NewCacheServer(listenAddr string) *CacheServer {
 		quitChannel:    make(chan struct{}),
 		msgChannel:     make(chan Message),
 		addPeerChannel: make(chan *net.Conn),
-		peers:          make([]*Peer, 0),
+		peers:          make(map[*Peer]bool),
 		cache:          NewLRUCache(4),
+		wg:             new(sync.WaitGroup),
 	}
 }
 
-func (s *CacheServer) Start() error {
+func (s *CacheServer) Start(wg *sync.WaitGroup) {
+	defer wg.Done()
 	listener, err := net.Listen("tcp", s.listenAddr)
 	if err != nil {
-		return err
+		log.Println("Error starting the listener:", err.Error())
+		return
 	}
 	s.listener = listener
-	go s.acceptConnections()
 
-	s.mainLoop()
-	log.Println("Closing TCP listener...")
-	return listener.Close()
+	s.wg.Add(2)
+	go s.acceptConnections()
+	go s.mainLoop()
+
+	s.wg.Wait()
 }
 
 func (s *CacheServer) mainLoop() {
+	defer s.wg.Done()
 	for {
 		select {
 		case <-s.quitChannel:
-			log.Println("Stopping server...")
 			return
 		case conn := <-s.addPeerChannel:
 			s.attachPeer(conn)
@@ -65,13 +72,19 @@ func (s *CacheServer) handleMessage(msg Message) error {
 	switch cmd.(type) {
 	case GetCommand:
 		key := cmd.(GetCommand).key
-		msg.peer.WriteData(bytes.NewBufferString(s.cache.Get(key)).Bytes())
+		err = msg.peer.WriteData(bytes.NewBufferString(s.cache.Get(key)).Bytes())
+		if err != nil {
+			return err
+		}
 		return nil
 	case PutCommand:
 		key := cmd.(PutCommand).key
 		val := cmd.(PutCommand).val
 		s.cache.Put(key, val)
-		msg.peer.WriteData(bytes.NewBufferString("DONE").Bytes())
+		err = msg.peer.WriteData(bytes.NewBufferString("DONE").Bytes())
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 	return errors.New("invalid message format")
@@ -79,26 +92,64 @@ func (s *CacheServer) handleMessage(msg Message) error {
 
 func (s *CacheServer) attachPeer(conn *net.Conn) {
 	peer := NewPeer(*conn, s.msgChannel)
-	s.peers = append(s.peers, peer)
+	s.peers[peer] = true
+	s.wg.Add(1)
 	go func() {
+		defer s.wg.Done()
 		err := peer.ReadData()
+		if errors.Is(err, goredis.CONN_CLOSE) {
+			return
+		}
 		if err != nil {
 			log.Println("Error while reading data:", err.Error())
 		}
+		s.peers[peer] = false
 	}()
 }
 
 func (s *CacheServer) acceptConnections() {
+	defer s.wg.Done()
 	for {
-		conn, err := s.listener.Accept()
-		if errors.Is(err, net.ErrClosed) {
+		select {
+		case <-s.quitChannel:
 			return
+		default:
+			conn, err := s.listener.Accept()
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if err != nil {
+				log.Println("Error while accepting connection:", err.Error())
+				continue
+			}
+			log.Println("New Connection:", conn.RemoteAddr())
+			s.addPeerChannel <- &conn
 		}
-		if err != nil {
-			log.Println("Error while accepting connection:", err.Error())
+	}
+}
+
+func (s *CacheServer) Quit() {
+	var wg sync.WaitGroup
+	for peer, connected := range s.peers {
+		if !connected {
 			continue
 		}
-		log.Println("New Connection:", conn.RemoteAddr())
-		s.addPeerChannel <- &conn
+		wg.Add(1)
+		peer.SendCloseMessage(&wg)
+	}
+	wg.Wait()
+	for peer, connected := range s.peers {
+		if !connected {
+			continue
+		}
+		wg.Add(1)
+		peer.Close(&wg)
+	}
+	wg.Wait()
+	s.quitChannel <- struct{}{}
+	log.Println("Closing TCP listener...")
+	err := s.listener.Close()
+	if err != nil {
+		log.Println("Error closing the listener:", err.Error())
 	}
 }
