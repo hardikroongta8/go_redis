@@ -1,6 +1,7 @@
 package server
 
 import (
+	"go_redis/pkg/goredis"
 	"io"
 	"net"
 )
@@ -24,16 +25,14 @@ type Message struct {
 
 func (p *Peer) ReadData() error {
 	for {
-		buf := make([]byte, 1024)
-		n, err := p.conn.Read(buf)
+		parser := goredis.NewReader(p.conn)
+		data, err := parser.Read()
 		if err == io.EOF {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		data := make([]byte, n)
-		copy(data, buf[:n])
 		p.msgChannel <- Message{
 			data: data,
 			peer: p,
@@ -42,6 +41,6 @@ func (p *Peer) ReadData() error {
 }
 
 func (p *Peer) WriteData(data []byte) error {
-	_, err := p.conn.Write(data)
-	return err
+	w := goredis.NewWriter(p.conn)
+	return w.Write(data)
 }

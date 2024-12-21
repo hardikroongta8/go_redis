@@ -1,9 +1,9 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"go_redis/pkg/goredis"
 	"io"
 	"log"
 	"net"
@@ -27,28 +27,28 @@ func New(addr string) (*Client, error) {
 
 func (c *Client) ReadData() error {
 	for {
-		buf := make([]byte, 2048)
-		n, err := c.conn.Read(buf)
+		reader := goredis.NewReader(c.conn)
+		data, err := reader.Read()
 		if err == io.EOF {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		log.Println(string(buf[:n]))
+		log.Println(string(data))
 	}
 }
 
 func (c *Client) Put(ctx context.Context, key string, value string) error {
 	str := fmt.Sprintf("PUT\r\n%s\r\n%s\r\n", key, value)
-	_, err := c.conn.Write(bytes.NewBufferString(str).Bytes())
-	return err
+	writer := goredis.NewWriter(c.conn)
+	return writer.Write([]byte(str))
 }
 
 func (c *Client) Get(ctx context.Context, key string) error {
 	str := fmt.Sprintf("GET\r\n%s\r\n", key)
-	_, err := c.conn.Write(bytes.NewBufferString(str).Bytes())
-	return err
+	writer := goredis.NewWriter(c.conn)
+	return writer.Write([]byte(str))
 }
 
 func (c *Client) Close() error {
